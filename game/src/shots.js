@@ -1,5 +1,5 @@
 // shots.js — staged, deterministic scenes for the maker's screenshots.
-// A ?shot=cover|rings|approach|debrief URL freezes the clock and poses a
+// A ?shot=cover|storm|approach|debrief URL freezes the clock and poses a
 // real game state (same plane, same mission bookkeeping the game itself
 // uses), so every screenshot is an honest render of the game's own code.
 
@@ -38,6 +38,24 @@ export function stageShot(game, name) {
     return;
   }
 
+  if (name === 'storm') {
+    // Mission 3, Storm Run: heavy bank into the crosswind, rain and a low
+    // cloud deck (the storm palette and weather come from the mission
+    // itself), crabbed heading, low fuel on the gauges.
+    const storm = MISSIONS[2];
+    game.missionIndex = 2;
+    const ms = createMissionState(storm);
+    ms.ringDone[0] = true; ms.ringsPassed = 1; ms.score = 250;
+    ms.message = 'RING 1/2  +250'; ms.messageT = 3;
+    game.mState = ms;
+    game.plane = stagedPlane(storm, {
+      x: 180, z: -1250, alt: 150, heading: 0.30, speed: 44,
+      throttle: 0.72, bank: -0.48, climbAngle: -0.05, vs: -2.2, fuel: 13,
+    });
+    game.screen = 'fly';
+    return;
+  }
+
   game.screen = 'fly';
   if (name === 'rings') {
     const ms = createMissionState(mission);
@@ -63,14 +81,20 @@ export function stageShot(game, name) {
     });
     return;
   }
-  // cover: last ring ahead, Nordhavn strip beyond it, panel lit.
+  // cover: mid ring-run, banked in a turn onto the next ring (bank
+  // 0.21 rad, horizon rolled). The plane sits on a 33-degree intercept
+  // heading with the NEXT ring dead ahead of the nose, fully clear of
+  // the airframe and seen obliquely, so it draws as a foreshortened
+  // ellipse; Nordhavn Strip lies in the distance to the left. The
+  // heading offset from the strip (0.58 rad) keeps the glide-slope aid
+  // out of the frame; ring progress shows on the objective board
+  // (Rings 4/6).
   const ms = createMissionState(mission);
-  for (let i = 0; i < 5; i++) ms.ringDone[i] = true;
-  ms.ringsPassed = 5; ms.score = 1250;
-  ms.message = 'RING 5/6  +250'; ms.messageT = 3;
+  for (let i = 0; i < 4; i++) ms.ringDone[i] = true;
+  ms.ringsPassed = 4; ms.score = 1000;
   game.mState = ms;
   game.plane = stagedPlane(mission, {
-    x: -28, z: -3360, alt: 131, heading: 0.02, speed: 47,
-    throttle: 0.62, bank: 0.06, climbAngle: 0.01, fuel: 64,
+    x: -241, z: -2590, alt: 71, heading: 0.58, speed: 47,
+    throttle: 0.66, bank: 0.21, climbAngle: 0.12, vs: 5.6, fuel: 64,
   });
 }

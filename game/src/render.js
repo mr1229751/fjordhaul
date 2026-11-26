@@ -100,6 +100,9 @@ export function drawScene(ctx, view) {
     ctx.fillStyle = sheen; ctx.fill();
   }
 
+  // --- storm cloud deck, behind the terrain ---
+  if (view.weather) drawClouds(ctx, t);
+
   // --- islands, far to near ---
   const sorted = ISLANDS.map((isl) => ({ isl, d: dist2(cam, isl) })).sort((a, b) => b.d - a.d);
   for (const { isl } of sorted) drawIsland(ctx, project, isl, pal);
@@ -126,6 +129,27 @@ export function drawScene(ctx, view) {
 
   // --- storm rain ---
   if (view.weather) drawRain(ctx, t);
+}
+
+// A low storm deck for weather scenes: overlapping soft-edged cloud
+// ellipses in flat greys, drifting slowly across the upper sky.
+function drawClouds(ctx, t) {
+  const blobs = [
+    { fx: 0.08, fy: 0.10, rx: 260, ry: 44 }, { fx: 0.30, fy: 0.05, rx: 320, ry: 52 },
+    { fx: 0.52, fy: 0.12, rx: 280, ry: 40 }, { fx: 0.74, fy: 0.06, rx: 330, ry: 50 },
+    { fx: 0.95, fy: 0.11, rx: 260, ry: 42 }, { fx: 0.18, fy: 0.20, rx: 220, ry: 30 },
+    { fx: 0.62, fy: 0.21, rx: 240, ry: 30 }, { fx: 0.88, fy: 0.22, rx: 200, ry: 26 },
+  ];
+  for (const b of blobs) {
+    const x = ((b.fx + t * 0.004) % 1.15 - 0.07) * W;
+    const y = b.fy * H;
+    const g = ctx.createRadialGradient(x, y, 6, x, y, b.rx);
+    g.addColorStop(0, 'rgba(34,40,48,0.55)');
+    g.addColorStop(0.7, 'rgba(34,40,48,0.27)');
+    g.addColorStop(1, 'rgba(34,40,48,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(x, y, b.rx, b.ry, 0, 0, Math.PI * 2); ctx.fill();
+  }
 }
 
 function dist2(cam, isl) { const dx = isl.x - cam.x, dz = isl.z - cam.z; return dx * dx + dz * dz; }
@@ -160,9 +184,8 @@ function drawIsland(ctx, project, isl, pal) {
   ];
   const N = 18;
   for (const ring of rings) {
-    ctx.fillStyle = ring.col;
-    ctx.beginPath();
-    let ok = true, started = false;
+    const pts = [];
+    let ok = true;
     for (let i = 0; i <= N; i++) {
       const a = (i / N) * Math.PI * 2;
       const wx = isl.x + Math.cos(a) * isl.r * ring.f;
@@ -170,9 +193,19 @@ function drawIsland(ctx, project, isl, pal) {
       const wy = terrainHeight(wx, wz) + (ring.f === 1 ? -1.5 : 0.5);
       const p = project(wx, wy, wz);
       if (!p) { ok = false; break; }
-      if (!started) { ctx.moveTo(p.x, p.y); started = true; } else ctx.lineTo(p.x, p.y);
+      pts.push(p);
     }
-    if (ok && started) { ctx.closePath(); ctx.fill(); }
+    if (!ok || !pts.length) continue;
+    ctx.fillStyle = ring.col;
+    ctx.beginPath();
+    pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+    ctx.closePath(); ctx.fill();
+    if (ring.f === 1) {
+      // Shoreline: a dark waterline rim with a pale beach edge inside it,
+      // so each land patch reads as land where it meets the fjord.
+      ctx.strokeStyle = 'rgba(8,26,22,0.55)'; ctx.lineWidth = 5; ctx.stroke();
+      ctx.strokeStyle = 'rgba(226,205,160,0.75)'; ctx.lineWidth = 2.2; ctx.stroke();
+    }
   }
 }
 
@@ -236,6 +269,26 @@ function drawRunway(ctx, project, rw, pal, view) {
   const c2 = project(rw.cx, rw.alt + 0.5, rw.cz - hl * 0.92);
   if (c1 && c2) { ctx.beginPath(); ctx.moveTo(c1.x, c1.y); ctx.lineTo(c2.x, c2.y); ctx.stroke(); }
   ctx.setLineDash([]);
+  // Threshold bars: piano-key stripes across both ends of the strip.
+  ctx.strokeStyle = pal.stripLine;
+  for (const endSign of [1, -1]) {
+    const zBar = rw.cz + endSign * (hl - 16);
+    for (const off of [-0.62, -0.31, 0, 0.31, 0.62]) {
+      const b1 = project(rw.cx + off * rw.width, rw.alt + 0.5, zBar + endSign * 13);
+      const b2 = project(rw.cx + off * rw.width, rw.alt + 0.5, zBar - endSign * 1);
+      if (b1 && b2) {
+        ctx.lineWidth = Math.max(1.2, Math.min(5, 260 / b1.depth));
+        ctx.beginPath(); ctx.moveTo(b1.x, b1.y); ctx.lineTo(b2.x, b2.y); ctx.stroke();
+      }
+    }
+  }
+  // Approach lights: a centreline row running out from the south
+  // threshold, so the strip can be picked out from far down the fjord.
+  ctx.fillStyle = '#cfe8ff';
+  for (let i = 1; i <= 5; i++) {
+    const p = project(rw.cx, rw.alt + 1.2, rw.cz + hl + i * 46);
+    if (p && p.depth < 3200) { ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1.2, 216 / p.depth), 0, Math.PI * 2); ctx.fill(); }
+  }
   // Edge lights.
   ctx.fillStyle = '#ffd76a';
   for (let i = 0; i <= 8; i++) {
@@ -260,12 +313,15 @@ function drawRunway(ctx, project, rw, pal, view) {
       }
     }
   }
-  // Name label when close.
-  const mid = project(rw.cx, rw.alt + 2, rw.cz);
-  if (mid && mid.depth < 1500) {
-    ctx.fillStyle = 'rgba(255,255,255,0.75)';
-    ctx.font = '600 13px system-ui, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(rw.name.toUpperCase(), mid.x, corners[0].y + 18);
+  // Name label when close: on the terrain west of the strip's near end,
+  // right-aligned so it ends beside the strip — never across the strip
+  // or the aircraft.
+  const labelP = project(rw.cx - hw - 75, rw.alt + 2, rw.cz + hl * 0.9);
+  const nearMid = project(rw.cx, rw.alt + 2, rw.cz + hl * 0.9);
+  if (labelP && nearMid && nearMid.depth < 1500) {
+    ctx.fillStyle = 'rgba(255,255,255,0.78)';
+    ctx.font = '600 13px system-ui, sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(rw.name.toUpperCase(), labelP.x, labelP.y + 4);
   }
 }
 
@@ -332,6 +388,33 @@ function drawCrates(ctx, project, ms) {
 function drawAircraft(ctx, plane, t) {
   const ax = W / 2 - (plane.bank || 0) * 26;
   const ay = H * 0.60 - (plane.climbAngle || 0) * 55;
+
+  // Grounding: a soft shadow on the water/terrain below, sliding away and
+  // fading as the aircraft climbs, tight under the wheels on the ground;
+  // and a faint twin wake when skimming low over water.
+  const groundAlt = terrainHeight(plane.x, plane.z);
+  const agl = Math.max(0, plane.alt - groundAlt);
+  if (plane.onGround) {
+    ctx.fillStyle = 'rgba(6,14,18,0.32)';
+    ctx.beginPath(); ctx.ellipse(ax, ay + 58, 150, 26, 0, 0, Math.PI * 2); ctx.fill();
+  } else {
+    const shA = Math.max(0.07, 0.30 - agl * 0.0021);
+    const shRx = Math.max(58, 148 - agl * 0.75);
+    const shX = ax + Math.min(64, agl * 0.55);
+    const shY = ay + 74 + Math.min(58, agl * 0.5);
+    ctx.fillStyle = 'rgba(6,14,18,' + shA.toFixed(3) + ')';
+    ctx.beginPath(); ctx.ellipse(shX, shY, shRx, shRx * 0.20, 0, 0, Math.PI * 2); ctx.fill();
+    if (groundAlt <= 0.01 && agl > 2 && agl < 30 && plane.speed > 12) {
+      ctx.strokeStyle = 'rgba(220,238,244,0.35)'; ctx.lineWidth = 2.5;
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(ax + side * 16, ay + 96);
+        ctx.quadraticCurveTo(ax + side * (30 + agl), ay + 130 + agl * 0.4, ax + side * (58 + agl * 1.4), ay + 168 + agl * 0.5);
+        ctx.stroke();
+      }
+    }
+  }
+
   ctx.save();
   ctx.translate(ax, ay);
   ctx.rotate((plane.bank || 0) * 0.85);
@@ -395,11 +478,16 @@ function drawAircraft(ctx, plane, t) {
   ctx.fillStyle = '#1c2329';
   ctx.beginPath(); ctx.arc(-31, 44, 7, 0, Math.PI * 2); ctx.arc(31, 44, 7, 0, Math.PI * 2); ctx.fill();
 
-  // Spinning prop at the nose: blurred disc and two blade streaks.
+  // Spinning prop at the nose: a translucent blur disc with a rim ring,
+  // and two blade streaks turning inside it.
   ctx.save();
   ctx.translate(0, -106);
+  ctx.fillStyle = 'rgba(200,214,224,0.10)';
+  ctx.beginPath(); ctx.ellipse(0, 0, 64, 13, 0, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = 'rgba(200,214,224,0.20)';
   ctx.beginPath(); ctx.ellipse(0, 0, 58, 11, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(215,228,238,0.38)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(0, 0, 59, 11.5, 0, 0, Math.PI * 2); ctx.stroke();
   ctx.strokeStyle = 'rgba(40,52,62,0.75)'; ctx.lineWidth = 4;
   const pa = plane.propPhase || 0;
   ctx.beginPath();

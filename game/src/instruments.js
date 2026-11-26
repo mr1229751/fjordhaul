@@ -54,7 +54,7 @@ function drawHeadingTape(ctx, plane, ms) {
     ctx.beginPath(); ctx.moveTo(x, y0 + h - 12); ctx.lineTo(x, y0 + h - (norm % 15 === 0 ? 22 : 17)); ctx.stroke();
     if (norm % 30 === 0) {
       ctx.fillStyle = '#dfe9ef'; ctx.font = '700 13px system-ui, sans-serif';
-      const label = norm === 0 ? 'N' : norm === 90 ? 'E' : norm === 180 ? 'S' : norm === 270 ? 'W' : String(norm / 10).padStart(2, '0');
+      const label = norm === 0 ? 'N' : norm === 90 ? 'E' : norm === 180 ? 'S' : norm === 270 ? 'W' : String(norm).padStart(3, '0');
       ctx.fillText(label, x, y0 + 20);
     }
   }
@@ -109,18 +109,19 @@ function drawPanel(ctx, plane, t) {
   drawDial(ctx, 108, y + 64, 54, 'AIRSPEED', 'm/s', plane.speed, 90, plane.speed.toFixed(0),
     (v) => -225 + (v / 90) * 270, plane.speed < STALL_SPEED + 3 && !plane.onGround);
   drawDial(ctx, W - 108, y + 64, 54, 'ALTIMETER', 'm', plane.alt, 1000, String(Math.max(0, Math.round(plane.alt))),
-    (v) => -90 + ((v % 1000) / 1000) * 360, false);
+    (v) => -90 + ((v % 1000) / 1000) * 360, false, 0.30);
   drawHorizon(ctx, W / 2 - 120, y + 64, 46, plane);
   drawVsi(ctx, W / 2 + 120, y + 64, plane);
   drawBars(ctx, 210, y + 22, plane);
 }
 
-function drawDial(ctx, cx, cy, r, label, unit, value, max, digital, angleFor, warn) {
+function drawDial(ctx, cx, cy, r, label, unit, value, max, digital, angleFor, warn, digitalFrac) {
   ctx.fillStyle = '#101c26';
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = warn && Math.sin(performance.now() / 130) > 0 ? '#ff5147' : '#5d7688';
   ctx.lineWidth = 2.5; ctx.stroke();
-  for (let v = 0; v <= max; v += max / 9) {
+  const step = max === 1000 ? 100 : max / 9;
+  for (let v = 0; v <= max; v += step) {
     const a = angleFor(v) * Math.PI / 180;
     const c = Math.cos(a), s = Math.sin(a);
     ctx.strokeStyle = '#aebfcc'; ctx.lineWidth = 2;
@@ -131,6 +132,11 @@ function drawDial(ctx, cx, cy, r, label, unit, value, max, digital, angleFor, wa
     if (max === 90 && v % 30 === 0) {
       ctx.fillStyle = '#dfe9ef'; ctx.font = '700 11px system-ui, sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(String(v), cx + c * (r - 19), cy + s * (r - 19) + 4);
+    }
+    // Altimeter face numerals: 0-9, one per 100 m revolution step.
+    if (max === 1000 && v < 1000) {
+      ctx.fillStyle = '#dfe9ef'; ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(String(v / 100), cx + c * (r - 20), cy + s * (r - 20) + 4);
     }
   }
   // Stall band on the airspeed dial.
@@ -143,7 +149,7 @@ function drawDial(ctx, cx, cy, r, label, unit, value, max, digital, angleFor, wa
   ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * (r - 12), cy + Math.sin(a) * (r - 12)); ctx.stroke();
   ctx.fillStyle = '#ffb340'; ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#f4f7f9'; ctx.font = '700 17px ui-monospace, Menlo, monospace'; ctx.textAlign = 'center';
-  ctx.fillText(digital, cx, cy + r * 0.52);
+  ctx.fillText(digital, cx, cy + r * (digitalFrac === undefined ? 0.52 : digitalFrac));
   ctx.fillStyle = '#8fb6c9'; ctx.font = '700 10px system-ui, sans-serif';
   ctx.fillText(label + ' ' + unit, cx, cy - r - 6);
 }
@@ -173,16 +179,37 @@ function drawHorizon(ctx, cx, cy, r, plane) {
 }
 
 function drawVsi(ctx, cx, cy, plane) {
-  ctx.fillStyle = '#8fb6c9'; ctx.font = '700 10px system-ui, sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('VERT SPEED', cx, cy - 46);
-  ctx.fillStyle = '#101c26'; ctx.fillRect(cx - 13, cy - 38, 26, 76);
-  ctx.strokeStyle = '#5d7688'; ctx.lineWidth = 1.5; ctx.strokeRect(cx - 13, cy - 38, 26, 76);
+  // A flown VSI: round dial, needle, graduations every 2 m/s, numerals at
+  // the majors, zero straight up, and a digital readout in m/s.
+  const r = 46;
   const vs = Math.max(-12, Math.min(12, plane.vs));
-  ctx.fillStyle = vs >= 0 ? '#7ee2a0' : '#ffb340';
-  const hgt = Math.abs(vs) / 12 * 36;
-  ctx.fillRect(cx - 9, vs >= 0 ? cy - hgt : cy, 18, hgt);
-  ctx.fillStyle = '#f4f7f9'; ctx.font = '700 13px ui-monospace, Menlo, monospace';
-  ctx.fillText((plane.vs >= 0 ? '+' : '') + plane.vs.toFixed(1), cx, cy + 54);
+  const angleFor = (v) => -225 + ((v + 12) / 24) * 270; // -12 bottom-left, 0 top, +12 bottom-right
+  ctx.fillStyle = '#101c26';
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#5d7688'; ctx.lineWidth = 2.5; ctx.stroke();
+  for (let v = -12; v <= 12; v += 2) {
+    const a = angleFor(v) * Math.PI / 180;
+    const c = Math.cos(a), s = Math.sin(a);
+    const major = v % 6 === 0;
+    ctx.strokeStyle = v === 0 ? '#ffffff' : '#aebfcc';
+    ctx.lineWidth = v === 0 ? 3 : major ? 2 : 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx + c * (r - (major ? 10 : 6)), cy + s * (r - (major ? 10 : 6)));
+    ctx.lineTo(cx + c * (r - 3), cy + s * (r - 3));
+    ctx.stroke();
+    if (major) {
+      ctx.fillStyle = '#dfe9ef'; ctx.font = '700 10px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(v > 0 ? '+' + v : String(v), cx + c * (r - 21), cy + s * (r - 21) + 3);
+    }
+  }
+  const a = angleFor(vs) * Math.PI / 180;
+  ctx.strokeStyle = '#ffb340'; ctx.lineWidth = 3.5;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * (r - 13), cy + Math.sin(a) * (r - 13)); ctx.stroke();
+  ctx.fillStyle = '#ffb340'; ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#f4f7f9'; ctx.font = '700 13px ui-monospace, Menlo, monospace'; ctx.textAlign = 'center';
+  ctx.fillText((plane.vs >= 0 ? '+' : '') + plane.vs.toFixed(1), cx, cy + r * 0.68);
+  ctx.fillStyle = '#8fb6c9'; ctx.font = '700 10px system-ui, sans-serif';
+  ctx.fillText('VERT SPEED m/s', cx, cy - r - 6);
 }
 
 function drawBars(ctx, x, y, plane) {
