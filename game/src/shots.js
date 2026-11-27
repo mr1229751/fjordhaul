@@ -69,15 +69,21 @@ export function stageShot(game, name) {
     return;
   }
   if (name === 'approach') {
+    // On final: five rings flown, the last gate still ahead on the way
+    // in, 600 m from the Nordhavn threshold on a 3.2-degree glide (the
+    // aid reads ON GLIDE, PAPI two white two red), offset east of the
+    // centreline so the strip, its threshold bars and the approach
+    // light row sit clear of the airframe, with Sisteoya's peak
+    // standing off the right wing. Nordfjellet stays out of frame.
     const ms = createMissionState(mission);
     ms.ringDone = ms.ringDone.map(() => true);
-    ms.ringDone[5] = false; // the last ring still waits on the way in
+    ms.ringDone[5] = false;
     ms.ringsPassed = 5;
     ms.score = 1250;
     game.mState = ms;
     game.plane = stagedPlane(mission, {
-      x: RUNWAYS.far.cx + 4, z: -3300, alt: 52, heading: 0.01, speed: 38,
-      throttle: 0.34, bank: 0.02, climbAngle: -0.079, vs: -3.0, fuel: 30,
+      x: RUNWAYS.far.cx + 110, z: -3350, alt: 48, heading: 0.01, speed: 38,
+      throttle: 0.34, bank: 0.02, climbAngle: -0.057, vs: -2.2, fuel: 30,
     });
     return;
   }
@@ -94,7 +100,7 @@ export function stageShot(game, name) {
   ms.ringsPassed = 4; ms.score = 1000;
   game.mState = ms;
   game.plane = stagedPlane(mission, {
-    x: -241, z: -2590, alt: 71, heading: 0.58, speed: 47,
-    throttle: 0.66, bank: 0.21, climbAngle: 0.12, vs: 5.6, fuel: 64,
+    x: -241, z: -2590, alt: 74, heading: 0.58, speed: 47,
+    throttle: 0.66, bank: 0.21, climbAngle: 0.11, vs: 4.8, fuel: 64,
   });
 }

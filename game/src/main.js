@@ -2,6 +2,40 @@
 // flight, pause, debrief), the campaign's saved stars and bests, the wiring
 // between input, the flight model, the missions, the renderer, the
 // instruments and the sound, and the ?shot= staging the screenshots use.
+//
+// THE GAME. FJORDHAUL is a complete Canvas 2D chase-view flight game set
+// over a dusk fjord archipelago of fourteen islands, three airstrips, five
+// villages and a lighthouse, all drawn by the game's own code (low-poly
+// sun-shaded cliff facets, pine stands, waterfalls, working boats, lit
+// windows) with no external assets. You fly a fixed-gear prop freighter
+// between island strips on a three-mission campaign, each mission with a
+// different goal:
+//   1. FIRST FREIGHT — thread all 6 checkpoint rings down the fjord, then
+//      land at Nordhavn Strip (1,000 m of runway at the far end).
+//   2. SUPPLY DROP — parachute 3 supply crates onto marked island drop
+//      zones (Space over a zone; a crate keeps the plane's velocity, then
+//      settles under its canopy), then land at Nordhavn.
+//   3. STORM RUN — beat a gusting-crosswind front to Stormodden Short
+//      Strip: 460 m of runway, half tanks (58 units of fuel), failing
+//      light, turbulence shaking the airframe the whole way down.
+// FLIGHT MODEL. An energy budget, not an arcade glide: thrust fights
+// quadratic drag, speed bleeds in climbs and in hard banked turns, lift
+// collapses through the 23 m/s stall speed, fuel burns with the throttle
+// setting, and hull damage accrues from hard or misaligned touchdowns.
+// Landings are graded Gentle / Firm / Hard by sink rate, alignment and
+// speed; a sortie scores rings (+250), crates on target (+300) and the
+// touchdown grade (+400/+200/+50), and earns 1–3 campaign stars per
+// mission — a bent airframe (over 40% damage) caps the grade at two.
+// Stars and best scores persist in localStorage, and each mission unlocks
+// the next. The panel is a flown one: airspeed and altimeter dials with
+// needles and digital readouts, an artificial horizon, a vertical-speed
+// dial, a heading tape with a bearing bug for the next objective,
+// throttle/fuel/hull bars, a gear-down lamp, AGL and distance-to-strip
+// readouts, PAPI lights and a glide-slope aid on final.
+// CONTROLS. W/S throttle · arrow keys pitch and bank (mouse works too) ·
+// Space drop crate · P or Esc pause · R restart the sortie · M mute ·
+// Enter select and start. Sound is synthesized in code (engine, stall
+// warning, chimes, touchdown thuds); there are no audio files.
 
 import { createPlane, stepPlane, stormWeather } from './flight-model.js';
 import { MISSIONS, createMissionState, updateMission, dropCrate, starsFor } from './missions.js';

@@ -22,6 +22,36 @@ const RIDGE_NEAR = ridgeProfile(13, 96, 60, 110);
 const STARS = (() => { const rnd = mulberry32(99); const s = []; for (let i = 0; i < 90; i++) s.push({ x: rnd(), y: rnd() * 0.4, r: rnd() * 1.3 + 0.4 }); return s; })();
 const HOUSES = VILLAGES.map(villageHouses);
 
+// Per-island dressing, all seeded so the fjord is identical on every
+// flight: facet shading jitter, pine stands on the slopes, and one
+// waterfall angle for each tall island. The sun sits low in the west,
+// so facets facing it catch the light.
+const SUN_DIR = { x: -0.9, z: -0.44 };
+const ISLAND_DECOR = ISLANDS.map((isl, idx) => {
+  const rnd = mulberry32(1000 + idx * 131);
+  const jitter = [];
+  for (let i = 0; i < 40; i++) jitter.push(0.94 + rnd() * 0.12);
+  const trees = [];
+  const treeCount = isl.h >= 40 ? 26 : 7;
+  for (let i = 0; i < treeCount; i++) trees.push({ a: rnd() * Math.PI * 2, f: 0.48 + rnd() * 0.47, s: 0.8 + rnd() * 0.5 });
+  const fall = isl.h >= 130 ? rnd() * Math.PI * 2 : null;
+  return { jitter, trees, fall };
+});
+const SPARKS = (() => { const rnd = mulberry32(4242); const s = []; for (let i = 0; i < 220; i++) s.push({ u: rnd(), v: rnd(), w: rnd() }); return s; })();
+// Working boats: a hull colour and a slow patrol line each.
+const BOATS = [
+  { x: -330, z: -950, dir: 0.35, phase: 0.4, range: 120, hue: '#a63c2e' },
+  { x: 430, z: -2150, dir: -0.55, phase: 2.4, range: 100, hue: '#33566b' },
+  { x: -160, z: -3400, dir: 0.95, phase: 4.4, range: 85, hue: '#7a5a38' },
+];
+
+function hexRgb(hex) { return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)]; }
+function mixRgb(a, b, f) { return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]; }
+function css(rgb, shade) {
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v * shade)));
+  return 'rgb(' + c(rgb[0]) + ',' + c(rgb[1]) + ',' + c(rgb[2]) + ')';
+}
+
 export function drawScene(ctx, view) {
   const pal = view.palette;
   const plane = view.plane;
@@ -61,8 +91,9 @@ export function drawScene(ctx, view) {
   }
 
   // --- sky ---
-  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.75);
-  sky.addColorStop(0, pal.skyTop); sky.addColorStop(0.55, pal.skyMid); sky.addColorStop(1, pal.skyLow);
+  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.8);
+  sky.addColorStop(0, pal.skyTop); sky.addColorStop(0.48, pal.skyMid);
+  sky.addColorStop(0.74, pal.horizon); sky.addColorStop(1, pal.skyLow);
   ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   for (const s of STARS) {
@@ -71,14 +102,22 @@ export function drawScene(ctx, view) {
     ctx.fillRect(sx, s.y * H, s.r, s.r);
   }
   ctx.globalAlpha = 1;
-  // Low sun, fixed in the west.
+  // Low sun, fixed in the west, with a broad warm glow around it.
   const sun = project(cam.x - 6000, cam.alt + 260, cam.z - 2500);
   if (sun) {
+    const glow = ctx.createRadialGradient(sun.x, sun.y, 8, sun.x, sun.y, 190);
+    glow.addColorStop(0, 'rgba(255,196,120,0.42)');
+    glow.addColorStop(0.4, 'rgba(255,170,100,0.16)');
+    glow.addColorStop(1, 'rgba(255,160,90,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(sun.x - 190, sun.y - 190, 380, 380);
     ctx.fillStyle = pal.sun;
     ctx.beginPath(); ctx.arc(sun.x, sun.y, 30, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = 'rgba(255,205,140,0.25)';
     ctx.beginPath(); ctx.arc(sun.x, sun.y, 58, 0, Math.PI * 2); ctx.fill();
   }
+  // Dusk cloud bands, lit from below by the setting sun.
+  if (!view.weather) drawDuskClouds(ctx, cam.heading);
 
   // --- water: the horizon line comes from projecting two far points at
   // camera height, so pitch and roll tilt it exactly as the world does ---
@@ -98,20 +137,26 @@ export function drawScene(ctx, view) {
     const sheen = ctx.createLinearGradient(0, Math.min(left.y, right.y), 0, H);
     sheen.addColorStop(0, pal.waterFar); sheen.addColorStop(0.35, 'rgba(0,0,0,0)');
     ctx.fillStyle = sheen; ctx.fill();
+    // Sun glitter and cool sparkle on the water's surface.
+    drawSparkles(ctx, left, right, sun, t);
   }
+  drawBirds(ctx, t);
 
   // --- storm cloud deck, behind the terrain ---
   if (view.weather) drawClouds(ctx, t);
 
   // --- islands, far to near ---
-  const sorted = ISLANDS.map((isl) => ({ isl, d: dist2(cam, isl) })).sort((a, b) => b.d - a.d);
-  for (const { isl } of sorted) drawIsland(ctx, project, isl, pal);
+  const sorted = ISLANDS.map((isl, idx) => ({ isl, idx, d: dist2(cam, isl) })).sort((a, b) => b.d - a.d);
+  for (const { isl, idx } of sorted) drawIsland(ctx, project, isl, idx, pal, cam);
 
   // --- villages and lighthouse ---
   VILLAGES.forEach((village, vi) => {
     for (const house of HOUSES[vi]) drawHouse(ctx, project, house, pal);
   });
   drawLighthouse(ctx, project, t, pal);
+
+  // --- boats working the fjord ---
+  drawBoats(ctx, project, t);
 
   // --- runways ---
   for (const key of Object.keys(RUNWAYS)) drawRunway(ctx, project, RUNWAYS[key], pal, view);
@@ -158,6 +203,7 @@ function dist2(cam, isl) { const dx = isl.x - cam.x, dz = isl.z - cam.z; return 
 // between the two projected horizon ends, scrolled slowly by heading.
 function drawRidge(ctx, left, right, profile, color, ampPx, par, heading) {
   const n = profile.length;
+  const pts = [];
   ctx.fillStyle = color;
   ctx.beginPath();
   for (let i = 0; i <= 32; i++) {
@@ -166,6 +212,7 @@ function drawRidge(ctx, left, right, profile, color, ampPx, par, heading) {
     const lift = (profile[idx] - 55) / 195; // profiles live around 60..250
     const x = -40 + frac * (W + 80);
     const y = left.y + (right.y - left.y) * frac - Math.max(0, lift) * ampPx + 2;
+    pts.push({ x, y, lift });
     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   for (let i = 32; i >= 0; i--) {
@@ -173,38 +220,237 @@ function drawRidge(ctx, left, right, profile, color, ampPx, par, heading) {
     ctx.lineTo(-40 + frac * (W + 80), left.y + (right.y - left.y) * frac + 3);
   }
   ctx.closePath(); ctx.fill();
+  // Snow lying on the highest crests.
+  ctx.strokeStyle = 'rgba(233,240,242,0.8)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (pts[i].lift > 0.74 && pts[i + 1].lift > 0.74) {
+      ctx.moveTo(pts[i].x, pts[i].y + 1); ctx.lineTo(pts[i + 1].x, pts[i + 1].y + 1);
+    }
+  }
+  ctx.stroke();
 }
 
-function drawIsland(ctx, project, isl, pal) {
-  const rings = [
-    { f: 1.0, col: pal.slopeDark },
-    { f: 0.66, col: pal.slopeMid },
-    { f: 0.36, col: pal.slopeHigh },
-    { f: 0.15, col: isl.h > 150 ? pal.snow : pal.rock },
-  ];
-  const N = 18;
-  for (const ring of rings) {
-    const pts = [];
-    let ok = true;
+// An island drawn as low-poly facets: a lattice of rings and sectors,
+// each quad shaded by its height band and by how squarely it faces the
+// low western sun, so the slopes read as real fjord cliffs — sunlit on
+// one side, in shadow on the other — instead of flat stacked ellipses.
+function drawIsland(ctx, project, isl, idx, pal, cam) {
+  const decor = ISLAND_DECOR[idx];
+  const dark = hexRgb(pal.slopeDark), mid = hexRgb(pal.slopeMid), high = hexRgb(pal.slopeHigh);
+  const rock = hexRgb(pal.rock), snow = hexRgb(pal.snow);
+  const bands = [1.0, 0.8, 0.58, 0.36, 0.17];
+  const N = 20;
+  const rings = bands.map((f) => {
+    const arr = [];
     for (let i = 0; i <= N; i++) {
       const a = (i / N) * Math.PI * 2;
-      const wx = isl.x + Math.cos(a) * isl.r * ring.f;
-      const wz = isl.z + Math.sin(a) * isl.r * ring.f;
-      const wy = terrainHeight(wx, wz) + (ring.f === 1 ? -1.5 : 0.5);
-      const p = project(wx, wy, wz);
-      if (!p) { ok = false; break; }
-      pts.push(p);
+      const wx = isl.x + Math.cos(a) * isl.r * f;
+      const wz = isl.z + Math.sin(a) * isl.r * f;
+      const wy = terrainHeight(wx, wz) + (f === 1 ? -1.5 : 0.4);
+      arr.push({ p: project(wx, wy, wz), h: wy });
     }
-    if (!ok || !pts.length) continue;
-    ctx.fillStyle = ring.col;
+    return arr;
+  });
+  const centre = project(isl.x, isl.h + 0.4, isl.z);
+  const colorFor = (meanH, sector) => {
+    const hf = isl.h > 0 ? meanH / isl.h : 0;
+    let base = hf < 0.45 ? mixRgb(dark, mid, hf / 0.45) : mixRgb(mid, high, (hf - 0.45) / 0.55);
+    if (isl.kind === 'peak') {
+      if (isl.h >= 140 && hf > 0.72) base = mixRgb(base, snow, Math.min(1, (hf - 0.72) / 0.28) * 0.92);
+      else if (hf > 0.82) base = mixRgb(base, rock, (hf - 0.82) * 1.6);
+    }
+    const midA = ((sector + 0.5) / N) * Math.PI * 2;
+    const dot = Math.cos(midA) * SUN_DIR.x + Math.sin(midA) * SUN_DIR.z;
+    const shade = Math.max(0.45, Math.min(1.25, 0.68 + 0.52 * dot)) * decor.jitter[sector % decor.jitter.length];
+    return css(base, shade);
+  };
+  for (let j = 0; j < bands.length - 1; j++) {
+    for (let i = 0; i < N; i++) {
+      const a = rings[j][i], b = rings[j][i + 1], c = rings[j + 1][i + 1], d = rings[j + 1][i];
+      if (!a.p || !b.p || !c.p || !d.p) continue;
+      ctx.fillStyle = colorFor((a.h + b.h + c.h + d.h) / 4, i);
+      ctx.beginPath();
+      ctx.moveTo(a.p.x, a.p.y); ctx.lineTo(b.p.x, b.p.y); ctx.lineTo(c.p.x, c.p.y); ctx.lineTo(d.p.x, d.p.y);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(8,18,14,0.10)'; ctx.lineWidth = 1; ctx.stroke();
+    }
+  }
+  // Summit fan: triangles from the innermost ring up to the peak. A
+  // plateau's level top is filled as one disc instead — a fan of long
+  // flat triangles shades like a crater rim.
+  if (centre) {
+    const inner = rings[bands.length - 1];
+    if (isl.kind === 'plateau') {
+      if (inner.every((pt) => pt.p)) {
+        ctx.fillStyle = css(mixRgb(mid, high, 0.55), 0.98);
+        ctx.beginPath();
+        inner.forEach((pt, i) => { if (i === 0) ctx.moveTo(pt.p.x, pt.p.y); else ctx.lineTo(pt.p.x, pt.p.y); });
+        ctx.closePath(); ctx.fill();
+      }
+    } else {
+      for (let i = 0; i < N; i++) {
+        const a = inner[i], b = inner[i + 1];
+        if (!a.p || !b.p) continue;
+        ctx.fillStyle = colorFor((a.h + b.h + isl.h) / 3, i);
+        ctx.beginPath();
+        ctx.moveTo(a.p.x, a.p.y); ctx.lineTo(b.p.x, b.p.y); ctx.lineTo(centre.x, centre.y);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+  }
+  // Shoreline: a dark waterline rim with a pale beach edge inside it,
+  // so each land patch reads as land where it meets the fjord.
+  const outer = rings[0];
+  if (outer.every((pt) => pt.p)) {
     ctx.beginPath();
-    pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+    outer.forEach((pt, i) => { if (i === 0) ctx.moveTo(pt.p.x, pt.p.y); else ctx.lineTo(pt.p.x, pt.p.y); });
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(8,26,22,0.55)'; ctx.lineWidth = 5; ctx.stroke();
+    ctx.strokeStyle = 'rgba(226,205,160,0.75)'; ctx.lineWidth = 2.2; ctx.stroke();
+  }
+  drawIslandTrees(ctx, project, isl, decor);
+  if (decor.fall !== null) drawWaterfall(ctx, project, isl, decor.fall, cam);
+}
+
+// Pine stands scattered over the lower slopes: two stacked triangles a
+// tree, dark against the grass, thinning out below the snowline.
+function drawIslandTrees(ctx, project, isl, decor) {
+  for (const tr of decor.trees) {
+    const wx = isl.x + Math.cos(tr.a) * isl.r * tr.f;
+    const wz = isl.z + Math.sin(tr.a) * isl.r * tr.f;
+    const wy = terrainHeight(wx, wz);
+    if (wy < 5 || wy > isl.h * 0.68) continue;
+    const p = project(wx, wy, wz);
+    if (!p || p.depth > 2400) continue;
+    const s = Math.max(1.6, Math.min(10, 640 / p.depth)) * tr.s;
+    ctx.fillStyle = '#1d3d2b';
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - s * 2.4); ctx.lineTo(p.x + s * 0.75, p.y); ctx.lineTo(p.x - s * 0.75, p.y);
     ctx.closePath(); ctx.fill();
-    if (ring.f === 1) {
-      // Shoreline: a dark waterline rim with a pale beach edge inside it,
-      // so each land patch reads as land where it meets the fjord.
-      ctx.strokeStyle = 'rgba(8,26,22,0.55)'; ctx.lineWidth = 5; ctx.stroke();
-      ctx.strokeStyle = 'rgba(226,205,160,0.75)'; ctx.lineWidth = 2.2; ctx.stroke();
+    ctx.fillStyle = '#2a5a3e';
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y - s * 3.1); ctx.lineTo(p.x + s * 0.5, p.y - s * 1.1); ctx.lineTo(p.x - s * 0.5, p.y - s * 1.1);
+    ctx.closePath(); ctx.fill();
+  }
+}
+
+// A white ribbon falling off the high islands where a cliff meets the
+// water, with a foam patch at its foot. Falls on the far side of an
+// island are skipped — they would draw over the summit.
+function drawWaterfall(ctx, project, isl, angle, cam) {
+  const baseWx = isl.x + Math.cos(angle) * isl.r;
+  const baseWz = isl.z + Math.sin(angle) * isl.r;
+  const camD = Math.hypot(cam.x - isl.x, cam.z - isl.z);
+  if (Math.hypot(cam.x - baseWx, cam.z - baseWz) > camD + isl.r * 0.35) return;
+  const pts = [];
+  for (let k = 0; k <= 5; k++) {
+    const f = 0.24 + (k / 5) * 0.76;
+    const wx = isl.x + Math.cos(angle) * isl.r * f;
+    const wz = isl.z + Math.sin(angle) * isl.r * f;
+    const p = project(wx, terrainHeight(wx, wz) + 0.7, wz);
+    if (!p || p.depth > 3400) return;
+    pts.push(p);
+  }
+  ctx.strokeStyle = 'rgba(206,233,243,0.55)';
+  ctx.lineWidth = Math.max(1.1, Math.min(3.2, 700 / pts[5].depth));
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+  ctx.stroke();
+  const b = pts[5];
+  ctx.fillStyle = 'rgba(232,246,250,0.55)';
+  ctx.beginPath(); ctx.ellipse(b.x, b.y, Math.max(2, 300 / b.depth), Math.max(1, 110 / b.depth), 0, 0, Math.PI * 2); ctx.fill();
+}
+
+// Soft dusk cloud bands: dark bellies with a warm sunlit underside.
+function drawDuskClouds(ctx, heading) {
+  const bands = [
+    { fx: 0.14, fy: 0.15, rx: 300, ry: 20 }, { fx: 0.42, fy: 0.09, rx: 380, ry: 24 },
+    { fx: 0.68, fy: 0.20, rx: 330, ry: 18 }, { fx: 0.90, fy: 0.12, rx: 290, ry: 21 },
+    { fx: 0.55, fy: 0.27, rx: 240, ry: 14 },
+  ];
+  for (const b of bands) {
+    const x = (((b.fx - heading * 0.015) % 1) + 1) % 1 * (W + 420) - 210;
+    const y = b.fy * H;
+    ctx.fillStyle = 'rgba(238,164,102,0.20)';
+    ctx.beginPath(); ctx.ellipse(x, y + b.ry * 0.55, b.rx, b.ry * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(27,40,54,0.30)';
+    ctx.beginPath(); ctx.ellipse(x, y, b.rx, b.ry, 0, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// Glitter on the water: a warm path under the sun and a cool sparkle
+// spread over the rest, each fleck twinkling on its own phase.
+function drawSparkles(ctx, left, right, sun, t) {
+  const horizonAt = (x) => left.y + (right.y - left.y) * ((x + 40) / (W + 80));
+  ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+  for (let i = 0; i < SPARKS.length; i++) {
+    const s = SPARKS[i];
+    const warm = i < 130;
+    if (warm && !sun) continue;
+    const x = warm ? sun.x + (s.u - 0.5) * (60 + s.v * 320) : s.u * W;
+    const hy = horizonAt(x);
+    const y = hy + 5 + s.v * s.v * (H - hy - 16);
+    if (y > H - 4 || y < hy + 3) continue;
+    const tw = 0.5 + 0.5 * Math.sin(t * 2.6 + s.w * 40);
+    const alpha = (warm ? 0.16 : 0.10) * (0.35 + 0.65 * tw);
+    ctx.strokeStyle = warm ? 'rgba(255,213,158,' + alpha.toFixed(3) + ')' : 'rgba(178,220,232,' + alpha.toFixed(3) + ')';
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 5 + s.v * 12, y); ctx.stroke();
+  }
+}
+
+// Two skeins of birds crossing the evening sky.
+function drawBirds(ctx, t) {
+  ctx.strokeStyle = 'rgba(14,22,28,0.6)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  for (let f = 0; f < 2; f++) {
+    const cx = ((t * 9 + 480 + f * 640) % (W + 360)) - 180;
+    const cy = 118 + f * 74 + Math.sin(t * 0.9 + f * 2.0) * 9;
+    for (let i = 0; i < 7; i++) {
+      const bx = cx + (i % 3) * 27 - Math.floor(i / 3) * 15;
+      const by = cy + Math.floor(i / 3) * 17 + (i % 3) * 5;
+      const flap = Math.sin(t * 7 + i * 1.3 + f) * 4;
+      ctx.beginPath();
+      ctx.moveTo(bx - 8, by + flap);
+      ctx.quadraticCurveTo(bx - 3, by - 3.5, bx, by);
+      ctx.quadraticCurveTo(bx + 3, by - 3.5, bx + 8, by + flap);
+      ctx.stroke();
+    }
+  }
+}
+
+// Working boats on slow patrol lines: a coloured hull, a lit cabin and
+// a V of foam trailing the stern.
+function drawBoats(ctx, project, t) {
+  for (const boat of BOATS) {
+    const off = Math.sin(t * 0.045 + boat.phase) * boat.range;
+    const bx = boat.x + Math.sin(boat.dir) * off;
+    const bz = boat.z - Math.cos(boat.dir) * off;
+    const fx = Math.sin(boat.dir), fz = -Math.cos(boat.dir);
+    const bow = project(bx + fx * 15, 1.2, bz + fz * 15);
+    if (!bow || bow.depth > 3200) continue;
+    const stern = project(bx - fx * 15, 1.2, bz - fz * 15);
+    const port = project(bx - fz * 5, 1.2, bz + fx * 5);
+    const star = project(bx + fz * 5, 1.2, bz - fx * 5);
+    if (!stern || !port || !star) continue;
+    ctx.strokeStyle = 'rgba(214,236,240,0.4)'; ctx.lineWidth = Math.max(1, 130 / bow.depth);
+    for (const side of [-1, 1]) {
+      const wStart = project(bx - fx * 15 + side * fz * 4, 0.6, bz - fz * 15 - side * fx * 4);
+      const wEnd = project(bx - fx * 52 + side * fz * 13, 0.6, bz - fz * 52 - side * fx * 13);
+      if (wStart && wEnd) { ctx.beginPath(); ctx.moveTo(wStart.x, wStart.y); ctx.lineTo(wEnd.x, wEnd.y); ctx.stroke(); }
+    }
+    ctx.fillStyle = boat.hue;
+    ctx.beginPath();
+    ctx.moveTo(bow.x, bow.y); ctx.lineTo(star.x, star.y); ctx.lineTo(stern.x, stern.y); ctx.lineTo(port.x, port.y);
+    ctx.closePath(); ctx.fill();
+    const cabTop = project(bx - fx * 3, 5.2, bz - fz * 3);
+    const cabBase = project(bx - fx * 3, 1.2, bz - fz * 3);
+    if (cabTop && cabBase) {
+      const wpx = Math.max(1.5, 240 / bow.depth);
+      ctx.fillStyle = '#e9e2d2';
+      ctx.fillRect(cabTop.x - wpx, cabTop.y, wpx * 2, Math.max(1.5, cabBase.y - cabTop.y));
+      ctx.fillStyle = '#ffca7a';
+      ctx.fillRect(cabTop.x - wpx * 0.4, cabTop.y + (cabBase.y - cabTop.y) * 0.35, wpx * 0.8, Math.max(1, (cabBase.y - cabTop.y) * 0.3));
     }
   }
 }
@@ -221,6 +467,13 @@ function drawHouse(ctx, project, house, pal) {
   ctx.lineTo(base.x, base.y - s * 1.35);
   ctx.lineTo(base.x + s * 0.65, base.y - s * 0.8);
   ctx.closePath(); ctx.fill();
+  // Lit windows against the dusk — somebody is home for supper.
+  if (s > 6) {
+    ctx.fillStyle = '#ffc46a';
+    const ws = s * 0.16;
+    ctx.fillRect(base.x - s * 0.30, base.y - s * 0.55, ws, ws);
+    if (house.rot > 1.2) ctx.fillRect(base.x + s * 0.13, base.y - s * 0.55, ws, ws);
+  }
 }
 
 function drawLighthouse(ctx, project, t, pal) {

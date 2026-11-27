@@ -4,7 +4,7 @@
 // fuel and hull bars, warning lights, the objective board, centre messages
 // and the glide-slope aid that appears on final approach.
 
-import { RUNWAYS, runwayLocal } from './world.js';
+import { RUNWAYS, runwayLocal, terrainHeight } from './world.js';
 import { STALL_SPEED, wrapAngle } from './flight-model.js';
 import { objectivesText } from './missions.js';
 
@@ -14,7 +14,7 @@ export function drawInstruments(ctx, plane, ms, t, opts) {
   drawTopReadouts(ctx, plane);
   drawHeadingTape(ctx, plane, ms);
   drawObjectives(ctx, plane, ms, opts);
-  drawPanel(ctx, plane, t);
+  drawPanel(ctx, plane, t, ms);
   drawWarnings(ctx, plane, t);
   drawGlideAid(ctx, plane, ms);
   if (ms && ms.messageT > 0 && ms.message) drawCentreMessage(ctx, ms, t);
@@ -101,7 +101,7 @@ function drawObjectives(ctx, plane, ms, opts) {
   }
 }
 
-function drawPanel(ctx, plane, t) {
+function drawPanel(ctx, plane, t, ms) {
   const y = H - 128;
   ctx.fillStyle = 'rgba(9,15,21,0.92)';
   ctx.fillRect(0, y, W, 128);
@@ -113,6 +113,32 @@ function drawPanel(ctx, plane, t) {
   drawHorizon(ctx, W / 2 - 120, y + 64, 46, plane);
   drawVsi(ctx, W / 2 + 120, y + 64, plane);
   drawBars(ctx, 210, y + 22, plane);
+  drawStatusCluster(ctx, 838, y + 20, plane, ms);
+}
+
+// The right-hand status cluster: gear state (fixed gear on this old
+// freighter — the lamp is green and stays green), height above the
+// terrain under the keel, and the distance still to run to the
+// destination strip.
+function drawStatusCluster(ctx, x, y, plane, ms) {
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#7ee2a0';
+  ctx.beginPath(); ctx.arc(x + 5, y + 8, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#dfe9ef'; ctx.font = '700 13px system-ui, sans-serif';
+  ctx.fillText('GEAR DOWN · LOCKED', x + 18, y + 12);
+  ctx.fillStyle = '#8fb6c9'; ctx.font = '700 11px system-ui, sans-serif';
+  ctx.fillText('AGL', x, y + 44);
+  ctx.fillText('DST', x, y + 74);
+  ctx.fillStyle = '#f4f7f9'; ctx.font = '700 16px ui-monospace, Menlo, monospace';
+  const agl = Math.max(0, plane.alt - terrainHeight(plane.x, plane.z));
+  ctx.fillText(Math.round(agl) + ' m', x + 44, y + 45);
+  if (ms) {
+    const rw = RUNWAYS[ms.mission.destRunway];
+    const dist = Math.hypot(plane.x - rw.cx, plane.z - rw.cz) / 1000;
+    ctx.fillText(dist.toFixed(2) + ' km', x + 44, y + 75);
+    ctx.fillStyle = '#8fb6c9'; ctx.font = '600 11px system-ui, sans-serif';
+    ctx.fillText('to ' + rw.name, x + 44, y + 94);
+  }
 }
 
 function drawDial(ctx, cx, cy, r, label, unit, value, max, digital, angleFor, warn, digitalFrac) {
