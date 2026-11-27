@@ -359,10 +359,13 @@ function drawIslandTrees(ctx, project, isl, decor) {
 
 // A ribbon of water falling off the high islands where a cliff meets
 // the fjord: sampled densely so it hugs the slope as one continuous
-// band — no straight chords cutting across the facet seams — slightly
-// blue-white, with a bright core, a foam patch at its foot and a soft
-// mist halo where it lands. Falls on the far side of an island are
-// skipped — they would draw over the summit.
+// band — no straight chords cutting across the facet seams. The band
+// is drawn segment by segment, never as one uniform beam: it glows
+// at the lip and again at the foam foot, runs softer mid-fall, and
+// fades in and out behind drifting mist bands along its length, over
+// a faint wide glow that keeps its edges soft. A foam patch and a
+// mist halo sit where it lands. Falls on the far side of an island
+// are skipped — they would draw over the summit.
 function drawWaterfall(ctx, project, isl, angle, cam) {
   const baseWx = isl.x + Math.cos(angle) * isl.r;
   const baseWz = isl.z + Math.sin(angle) * isl.r;
@@ -379,7 +382,8 @@ function drawWaterfall(ctx, project, isl, angle, cam) {
     if (!p || p.depth > 3400) return;
     // Half-width in world metres, flaring gently toward the foot,
     // projected per point so the band narrows honestly with distance.
-    p.hw = Math.max(0.8, Math.min(9, (2.0 + 1.5 * t) * 640 / p.depth));
+    // Kept narrow — a fall is a thread of water, not a stripe.
+    p.hw = Math.max(0.5, Math.min(4.5, (1.0 + 0.8 * t) * 640 / p.depth));
     pts.push(p);
   }
   // Ribbon edges: offset each centre point along its screen normal.
@@ -392,19 +396,38 @@ function drawWaterfall(ctx, project, isl, angle, cam) {
     leftEdge.push({ x: pts[k].x - dy * pts[k].hw, y: pts[k].y + dx * pts[k].hw });
     rightEdge.push({ x: pts[k].x + dy * pts[k].hw, y: pts[k].y - dx * pts[k].hw });
   }
-  ctx.fillStyle = 'rgba(186,222,240,0.46)';
+  // Faint wide glow under the band, so no edge of the fall is hard:
+  // the same outline pushed out to about twice the ribbon's width.
+  const glowL = [], glowR = [];
+  for (let k = 0; k < pts.length; k++) {
+    const mx = (leftEdge[k].x + rightEdge[k].x) / 2, my = (leftEdge[k].y + rightEdge[k].y) / 2;
+    glowL.push({ x: mx + (leftEdge[k].x - mx) * 2.1, y: my + (leftEdge[k].y - my) * 2.1 });
+    glowR.push({ x: mx + (rightEdge[k].x - mx) * 2.1, y: my + (rightEdge[k].y - my) * 2.1 });
+  }
+  ctx.fillStyle = 'rgba(190,226,244,0.10)';
   ctx.beginPath();
-  leftEdge.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
-  for (let k = rightEdge.length - 1; k >= 0; k--) ctx.lineTo(rightEdge[k].x, rightEdge[k].y);
+  glowL.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+  for (let k = glowR.length - 1; k >= 0; k--) ctx.lineTo(glowR[k].x, glowR[k].y);
   ctx.closePath(); ctx.fill();
-  // Bright core running down the middle of the band.
-  const mid = pts[Math.floor(pts.length / 2)];
-  ctx.strokeStyle = 'rgba(238,249,253,0.72)';
-  ctx.lineWidth = Math.max(1, mid.hw * 0.9);
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.beginPath();
-  pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
-  ctx.stroke();
+  // The fall itself, one quad per sample segment. Alpha rides a
+  // profile along the fall — full at the lip (t=0) and at the foam
+  // foot (t=1), softer between — modulated by slow mist bands, so
+  // the ribbon breathes instead of beaming down the cliff.
+  for (let k = 0; k < pts.length - 1; k++) {
+    const t = (k + 0.5) / STEPS;
+    const lip = Math.exp(-t * 3.2);
+    const foot = Math.exp(-(1 - t) * 3.5);
+    const strength = 0.38 + 0.62 * Math.max(lip, foot * 0.9);
+    const band = 0.74 + 0.26 * Math.cos(t * Math.PI * 5);
+    const alpha = 0.38 * strength * band;
+    ctx.fillStyle = 'rgba(198,230,244,' + alpha.toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.moveTo(leftEdge[k].x, leftEdge[k].y);
+    ctx.lineTo(rightEdge[k].x, rightEdge[k].y);
+    ctx.lineTo(rightEdge[k + 1].x, rightEdge[k + 1].y);
+    ctx.lineTo(leftEdge[k + 1].x, leftEdge[k + 1].y);
+    ctx.closePath(); ctx.fill();
+  }
   // Foam where the fall lands, with mist drifting off it.
   const b = pts[pts.length - 1];
   const mistR = Math.max(6, 1000 / b.depth);
