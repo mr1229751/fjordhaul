@@ -103,4 +103,10 @@ export function stageShot(game, name) {
     x: -241, z: -2590, alt: 74, heading: 0.58, speed: 47,
     throttle: 0.66, bank: 0.21, climbAngle: 0.11, vs: 4.8, fuel: 64,
   });
+  // The destination strip lies ~1.9 km out in this frame and would read
+  // as a speck; flag it so the renderer lays an extended approach
+  // corridor — a centreline running out of the near threshold with a
+  // light row along it — toward the aircraft's side of the frame. This
+  // staging only; free flight never sets the flag.
+  RUNWAYS.far.coverGuide = true;
 }

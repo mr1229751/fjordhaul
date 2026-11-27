@@ -220,15 +220,37 @@ function drawRidge(ctx, left, right, profile, color, ampPx, par, heading) {
     ctx.lineTo(-40 + frac * (W + 80), left.y + (right.y - left.y) * frac + 3);
   }
   ctx.closePath(); ctx.fill();
-  // Snow lying on the highest crests.
-  ctx.strokeStyle = 'rgba(233,240,242,0.8)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-  ctx.beginPath();
-  for (let i = 0; i < pts.length - 1; i++) {
-    if (pts[i].lift > 0.74 && pts[i + 1].lift > 0.74) {
-      ctx.moveTo(pts[i].x, pts[i].y + 1); ctx.lineTo(pts[i + 1].x, pts[i + 1].y + 1);
+  // Snow lying on the highest crests. Only a run of three or more high
+  // points earns snow, drawn as a soft cap that hugs the crest — a
+  // shallow fill just under the crest line with a brighter line along
+  // the crest itself, eased half a step past each end. A lone high
+  // point or pair is skipped, so no short white dash ever floats by
+  // itself on the ridge.
+  let run = [];
+  const flushRun = () => {
+    if (run.length >= 3) {
+      const first = run[0], second = run[1];
+      const last = run[run.length - 1], prev = run[run.length - 2];
+      const head = { x: first.x - (second.x - first.x) * 0.5, y: first.y - (second.y - first.y) * 0.5 };
+      const tail = { x: last.x + (last.x - prev.x) * 0.5, y: last.y + (last.y - prev.y) * 0.5 };
+      const line = [head, ...run, tail];
+      ctx.fillStyle = 'rgba(233,240,242,0.40)';
+      ctx.beginPath();
+      line.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y + 1); else ctx.lineTo(p.x, p.y + 1); });
+      for (let i = line.length - 1; i >= 0; i--) ctx.lineTo(line[i].x, line[i].y + 5);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(238,244,246,0.78)';
+      ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      line.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y + 1); else ctx.lineTo(p.x, p.y + 1); });
+      ctx.stroke();
     }
+    run = [];
+  };
+  for (const p of pts) {
+    if (p.lift > 0.74) run.push(p); else flushRun();
   }
-  ctx.stroke();
+  flushRun();
 }
 
 // An island drawn as low-poly facets: a lattice of rings and sectors,
@@ -335,32 +357,64 @@ function drawIslandTrees(ctx, project, isl, decor) {
   }
 }
 
-// A white ribbon falling off the high islands where a cliff meets the
-// water, with a foam patch at its foot. Falls on the far side of an
-// island are skipped — they would draw over the summit.
+// A ribbon of water falling off the high islands where a cliff meets
+// the fjord: sampled densely so it hugs the slope as one continuous
+// band — no straight chords cutting across the facet seams — slightly
+// blue-white, with a bright core, a foam patch at its foot and a soft
+// mist halo where it lands. Falls on the far side of an island are
+// skipped — they would draw over the summit.
 function drawWaterfall(ctx, project, isl, angle, cam) {
   const baseWx = isl.x + Math.cos(angle) * isl.r;
   const baseWz = isl.z + Math.sin(angle) * isl.r;
   const camD = Math.hypot(cam.x - isl.x, cam.z - isl.z);
   if (Math.hypot(cam.x - baseWx, cam.z - baseWz) > camD + isl.r * 0.35) return;
+  const STEPS = 14;
   const pts = [];
-  for (let k = 0; k <= 5; k++) {
-    const f = 0.24 + (k / 5) * 0.76;
+  for (let k = 0; k <= STEPS; k++) {
+    const t = k / STEPS;
+    const f = 0.24 + t * 0.76;
     const wx = isl.x + Math.cos(angle) * isl.r * f;
     const wz = isl.z + Math.sin(angle) * isl.r * f;
     const p = project(wx, terrainHeight(wx, wz) + 0.7, wz);
     if (!p || p.depth > 3400) return;
+    // Half-width in world metres, flaring gently toward the foot,
+    // projected per point so the band narrows honestly with distance.
+    p.hw = Math.max(0.8, Math.min(9, (2.0 + 1.5 * t) * 640 / p.depth));
     pts.push(p);
   }
-  ctx.strokeStyle = 'rgba(206,233,243,0.55)';
-  ctx.lineWidth = Math.max(1.1, Math.min(3.2, 700 / pts[5].depth));
-  ctx.lineCap = 'round';
+  // Ribbon edges: offset each centre point along its screen normal.
+  const leftEdge = [], rightEdge = [];
+  for (let k = 0; k < pts.length; k++) {
+    const a = pts[Math.max(0, k - 1)], b = pts[Math.min(pts.length - 1, k + 1)];
+    let dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len; dy /= len;
+    leftEdge.push({ x: pts[k].x - dy * pts[k].hw, y: pts[k].y + dx * pts[k].hw });
+    rightEdge.push({ x: pts[k].x + dy * pts[k].hw, y: pts[k].y - dx * pts[k].hw });
+  }
+  ctx.fillStyle = 'rgba(186,222,240,0.46)';
+  ctx.beginPath();
+  leftEdge.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+  for (let k = rightEdge.length - 1; k >= 0; k--) ctx.lineTo(rightEdge[k].x, rightEdge[k].y);
+  ctx.closePath(); ctx.fill();
+  // Bright core running down the middle of the band.
+  const mid = pts[Math.floor(pts.length / 2)];
+  ctx.strokeStyle = 'rgba(238,249,253,0.72)';
+  ctx.lineWidth = Math.max(1, mid.hw * 0.9);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.beginPath();
   pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
   ctx.stroke();
-  const b = pts[5];
-  ctx.fillStyle = 'rgba(232,246,250,0.55)';
-  ctx.beginPath(); ctx.ellipse(b.x, b.y, Math.max(2, 300 / b.depth), Math.max(1, 110 / b.depth), 0, 0, Math.PI * 2); ctx.fill();
+  // Foam where the fall lands, with mist drifting off it.
+  const b = pts[pts.length - 1];
+  const mistR = Math.max(6, 1000 / b.depth);
+  const mist = ctx.createRadialGradient(b.x, b.y - mistR * 0.3, 1, b.x, b.y - mistR * 0.3, mistR);
+  mist.addColorStop(0, 'rgba(235,246,250,0.45)');
+  mist.addColorStop(1, 'rgba(235,246,250,0)');
+  ctx.fillStyle = mist;
+  ctx.fillRect(b.x - mistR, b.y - mistR * 1.3, mistR * 2, mistR * 2);
+  ctx.fillStyle = 'rgba(236,248,252,0.65)';
+  ctx.beginPath(); ctx.ellipse(b.x, b.y, Math.max(2.5, b.hw * 2.8), Math.max(1.2, b.hw * 1.0), 0, 0, Math.PI * 2); ctx.fill();
 }
 
 // Soft dusk cloud bands: dark bellies with a warm sunlit underside.
@@ -541,6 +595,35 @@ function drawRunway(ctx, project, rw, pal, view) {
   for (let i = 1; i <= 5; i++) {
     const p = project(rw.cx, rw.alt + 1.2, rw.cz + hl + i * 46);
     if (p && p.depth < 3200) { ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1.2, 216 / p.depth), 0, Math.PI * 2); ctx.fill(); }
+  }
+  // Cover staging only (the flag is set by shots.js, never in flight):
+  // the destination strip sits ~1.9 km out and reads as a speck, so lay
+  // an extended approach corridor out of the near threshold toward the
+  // aircraft — a dashed centreline over the water with a longer, softly
+  // haloed light row along it — until the strip reads as the landing
+  // target it is.
+  if (rw.coverGuide) {
+    ctx.strokeStyle = 'rgba(207,232,255,0.55)';
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([10, 9]);
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i <= 12; i++) {
+      const p = project(rw.cx, rw.alt + 0.6, rw.cz + hl + i * 52);
+      if (!p || p.depth > 3400) continue;
+      if (!started) { ctx.moveTo(p.x, p.y); started = true; } else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (let i = 1; i <= 12; i++) {
+      const p = project(rw.cx, rw.alt + 1.2, rw.cz + hl + i * 52);
+      if (p && p.depth < 3400) {
+        ctx.fillStyle = 'rgba(207,232,255,0.28)';
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(2.2, 430 / p.depth), 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#dff2ff';
+        ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(1.3, 216 / p.depth), 0, Math.PI * 2); ctx.fill();
+      }
+    }
   }
   // Edge lights.
   ctx.fillStyle = '#ffd76a';
